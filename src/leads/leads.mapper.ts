@@ -1,16 +1,10 @@
-import type { ActivityDto, LeadDto, NoteDto, TaskDto } from "@crm/shared";
+import type { ActivityDto, LeadDto, NoteDto, TaskDto } from '@crm/shared';
 import type {
   Activity as ActivityRow,
   Lead as LeadRow,
   Note as NoteRow,
   Task as TaskRow,
-} from "../../generated/client";
-
-export type LeadWithRelations = LeadRow & {
-  leadNotes: NoteRow[];
-  activities: ActivityRow[];
-  tasks: TaskRow[];
-};
+} from '../../generated/client';
 
 export const toNoteDto = (row: NoteRow): NoteDto => ({
   id: row.id,
@@ -42,7 +36,7 @@ export const toTaskDto = (row: TaskRow): TaskDto => ({
   completedAt: row.completedAt?.toISOString() ?? null,
 });
 
-export const toLeadDto = (row: LeadWithRelations): LeadDto => ({
+export const toLeadDto = (row: LeadRow): LeadDto => ({
   id: row.id,
   name: row.name,
   email: row.email,
@@ -58,7 +52,4 @@ export const toLeadDto = (row: LeadWithRelations): LeadDto => ({
   closedById: row.closedById,
   assignedToId: row.assignedToId,
   assignedToName: row.assignedToName ?? null,
-  leadNotes: row.leadNotes.map(toNoteDto),
-  activities: row.activities.map(toActivityDto),
-  tasks: row.tasks.map(toTaskDto),
 });

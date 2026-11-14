@@ -2,7 +2,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
-} from "@nestjs/common";
+} from '@nestjs/common';
 import {
   isClosedStatus,
   permissions,
@@ -15,31 +15,22 @@ import {
   type RemoveLeadPayload,
   type UpdateLeadPayload,
   type UpdateLeadResponse,
-} from "@crm/shared";
-import { PrismaService } from "../prisma/prisma.service";
-import { toLeadDto } from "./leads.mapper";
-
-const leadInclude = {
-  leadNotes: true,
-  activities: true,
-  tasks: true,
-} as const;
+} from '@crm/shared';
+import { PrismaService } from '../prisma/prisma.service';
+import { toLeadDto } from './leads.mapper';
 
 @Injectable()
 export class LeadsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll(): Promise<LeadDto[]> {
-    const leads = await this.prisma.lead.findMany({
-      include: leadInclude,
-    });
+    const leads = await this.prisma.lead.findMany({});
     return leads.map(toLeadDto);
   }
 
   async findOne({ id }: FindLeadPayload): Promise<LeadDto> {
     const lead = await this.prisma.lead.findUnique({
       where: { id },
-      include: leadInclude,
     });
     if (!lead) throw new NotFoundException(`Lead ${id} not found`);
     return toLeadDto(lead);
@@ -51,14 +42,13 @@ export class LeadsService {
         ...data,
         activities: {
           create: {
-            type: "lead_created",
-            description: "Lead was created",
+            type: 'lead_created',
+            description: 'Lead was created',
             userId: actor.id,
             userName: actor.name,
           },
         },
       },
-      include: leadInclude,
     });
     return toLeadDto(lead);
   }
@@ -78,13 +68,13 @@ export class LeadsService {
 
     if (!has(permissions.leadUpdate)) {
       const changesOtherFields = Object.entries(rest).some(
-        ([key, value]) => key !== "status" && value !== undefined,
+        ([key, value]) => key !== 'status' && value !== undefined,
       );
       if (changesOtherFields) {
-        throw new ForbiddenException("You cannot change this lead");
+        throw new ForbiddenException('You cannot change this lead');
       }
       if (rest.status === undefined && assignedToId === undefined) {
-        throw new ForbiddenException("You cannot change this lead");
+        throw new ForbiddenException('You cannot change this lead');
       }
     }
 
@@ -93,17 +83,17 @@ export class LeadsService {
     if (assignInPayload) {
       if (assignedToId === null) {
         if (!has(permissions.leadUnassign)) {
-          throw new ForbiddenException("Insufficient permissions");
+          throw new ForbiddenException('Insufficient permissions');
         }
       } else if (assignedToId === actor.id) {
         const leadIsFreeOrMine =
           oldLead.assignedToId === null || oldLead.assignedToId === actor.id;
         const canTake = has(permissions.leadTake) && leadIsFreeOrMine;
         if (!has(permissions.leadAssign) && !canTake) {
-          throw new ForbiddenException("You cannot change this lead");
+          throw new ForbiddenException('You cannot change this lead');
         }
       } else if (!has(permissions.leadAssign)) {
-        throw new ForbiddenException("You cannot change this lead");
+        throw new ForbiddenException('You cannot change this lead');
       }
     }
 
@@ -123,7 +113,7 @@ export class LeadsService {
 
     if (statusChanged) {
       activities.push({
-        type: "status_changed",
+        type: 'status_changed',
         description: `${oldLead.status} → ${rest.status}`,
         userId: actor.id,
         userName: actor.name,
@@ -131,10 +121,10 @@ export class LeadsService {
     }
 
     if (assignedChanged) {
-      const from = oldLead.assignedToName ?? "Unassigned";
-      const to = assignee?.name ?? "Unassigned";
+      const from = oldLead.assignedToName ?? 'Unassigned';
+      const to = assignee?.name ?? 'Unassigned';
       activities.push({
-        type: "assigned",
+        type: 'assigned',
         description: `${from} → ${to}`,
         userId: actor.id,
         userName: actor.name,
@@ -143,8 +133,8 @@ export class LeadsService {
 
     if (activities.length === 0) {
       activities.push({
-        type: "lead_updated",
-        description: "Lead was updated",
+        type: 'lead_updated',
+        description: 'Lead was updated',
         userId: actor.id,
         userName: actor.name,
       });
@@ -172,7 +162,6 @@ export class LeadsService {
           : {}),
         activities: { create: activities },
       },
-      include: leadInclude,
     });
 
     return {
