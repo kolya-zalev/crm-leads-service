@@ -3,7 +3,6 @@ import type {
   Activity as ActivityRow,
   Lead as LeadRow,
   Note as NoteRow,
-  Task as TaskRow,
 } from '../../generated/client';
 
 export const toNoteDto = (row: NoteRow): NoteDto => ({
