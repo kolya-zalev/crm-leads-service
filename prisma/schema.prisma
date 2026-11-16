@@ -28,7 +28,7 @@ model Lead {
 
   leadNotes  Note[]
   activities Activity[]
-  tasks      Task[]
+
 
   @@index([status, statusChangedAt])
   @@index([closedById])
@@ -56,15 +56,3 @@ model Activity {
   userName String  @default("")
 }
 
-model Task {
-  id          String    @id @default(uuid())
-  leadId      String
-  lead        Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  title       String
-  description String?
-  status      String    @default("pending")
-  priority    String    @default("medium")
-  dueDate     DateTime
-  createdAt   DateTime  @default(now())
-  completedAt DateTime?
-}

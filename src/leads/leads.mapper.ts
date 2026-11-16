@@ -24,18 +24,6 @@ export const toActivityDto = (row: ActivityRow): ActivityDto => ({
   userName: row.userName,
 });
 
-export const toTaskDto = (row: TaskRow): TaskDto => ({
-  id: row.id,
-  leadId: row.leadId,
-  title: row.title,
-  description: row.description ?? null,
-  status: row.status,
-  priority: row.priority,
-  dueDate: row.dueDate.toISOString(),
-  createdAt: row.createdAt.toISOString(),
-  completedAt: row.completedAt?.toISOString() ?? null,
-});
-
 export const toLeadDto = (row: LeadRow): LeadDto => ({
   id: row.id,
   name: row.name,
