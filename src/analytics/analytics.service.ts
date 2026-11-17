@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable } from '@nestjs/common';
 import {
   closeStatuses,
   openStatuses,
@@ -9,19 +9,31 @@ import {
   type LeadAnalytics,
   type LeadByUserRow,
   type UserRef,
-} from "@crm/shared";
-import { PrismaService } from "../prisma/prisma.service";
+} from '@crm/shared';
+import { InjectRepository } from '@nestjs/typeorm';
+import {
+  And,
+  In,
+  IsNull,
+  LessThan,
+  MoreThanOrEqual,
+  Repository,
+} from 'typeorm';
 import {
   dayMs,
   smallSampleThreshold,
   stuckLeadsLimit,
   stuckThresholdDays,
-} from "./analytics.constants";
-import { buildEmployeeAnalytics } from "./employee/employee-analytics";
+} from './analytics.constants';
+import { buildEmployeeAnalytics } from './employee/employee-analytics';
+import { LeadEntity } from '../leads/lead.entity';
 
 @Injectable()
 export class AnalyticsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @InjectRepository(LeadEntity)
+    private readonly leads: Repository<LeadEntity>,
+  ) {}
 
   async getLeadAnalytics({
     users,
@@ -29,43 +41,57 @@ export class AnalyticsService {
     const threshold = new Date(Date.now() - stuckThresholdDays * dayMs);
 
     const stuckWhere = {
-      status: { in: [...openStatuses] },
-      statusChangedAt: { lt: threshold },
+      status: In([...openStatuses]),
+      statusChangedAt: LessThan(threshold),
     };
 
-    const allByStatus = await this.prisma.lead.groupBy({
-      by: ["status"],
-      _count: { _all: true },
-    });
+    const allByStatusRaw = await this.leads
+      .createQueryBuilder('lead')
+      .select('lead.status', 'status')
+      .addSelect('COUNT(*)', 'count')
+      .groupBy('lead.status')
+      .getRawMany<{ status: string; count: string }>();
 
-    const won = allByStatus.find((s) => s.status === "won")?._count._all ?? 0;
-    const lost = allByStatus.find((s) => s.status === "lost")?._count._all ?? 0;
+    const allByStatus = allByStatusRaw.map((row) => ({
+      status: row.status,
+      count: Number(row.count),
+    }));
+
+    const won = allByStatus.find((s) => s.status === 'won')?.count ?? 0;
+    const lost = allByStatus.find((s) => s.status === 'lost')?.count ?? 0;
     const closed = won + lost;
 
     let open = 0;
     for (const status of openStatuses) {
       const found = allByStatus.find((s) => s.status === status);
-      open += found?._count._all ?? 0;
+      open += found?.count ?? 0;
     }
 
     const winRate = closed === 0 ? 0 : Math.round((won / closed) * 100);
 
-    const stuckByStatus = await this.prisma.lead.groupBy({
-      by: ["status"],
-      where: stuckWhere,
-      _count: { _all: true },
-    });
+    const stuckByStatusRaw = await this.leads
+      .createQueryBuilder('lead')
+      .select('lead.status', 'status')
+      .addSelect('COUNT(*)', 'count')
+      .where('lead.status IN (:...statuses)', { statuses: [...openStatuses] })
+      .andWhere('lead.statusChangedAt < :threshold', { threshold })
+      .groupBy('lead.status')
+      .getRawMany<{ status: string; count: string }>();
 
-    const stuckNew =
-      stuckByStatus.find((s) => s.status === "new")?._count._all ?? 0;
+    const stuckByStatus = stuckByStatusRaw.map((row) => ({
+      status: row.status,
+      count: Number(row.count),
+    }));
+
+    const stuckNew = stuckByStatus.find((s) => s.status === 'new')?.count ?? 0;
     const stuckContacted =
-      stuckByStatus.find((s) => s.status === "contacted")?._count._all ?? 0;
+      stuckByStatus.find((s) => s.status === 'contacted')?.count ?? 0;
     const stuckQualified =
-      stuckByStatus.find((s) => s.status === "qualified")?._count._all ?? 0;
+      stuckByStatus.find((s) => s.status === 'qualified')?.count ?? 0;
 
-    const stuckLeadsRaw = await this.prisma.lead.findMany({
+    const stuckLeadsRaw = await this.leads.find({
       where: stuckWhere,
-      orderBy: { statusChangedAt: "asc" },
+      order: { statusChangedAt: 'ASC' },
       take: stuckLeadsLimit,
       select: {
         id: true,
@@ -89,28 +115,45 @@ export class AnalyticsService {
       };
     });
 
-    const closedBeforeTracking = await this.prisma.lead.count({
-      where: { status: { in: [...closeStatuses] }, closedById: null },
+    const closedBeforeTracking = await this.leads.count({
+      where: {
+        status: In([...closeStatuses]),
+        closedById: IsNull(),
+      },
     });
 
-    const closedGroups = await this.prisma.lead.groupBy({
-      by: ["closedById", "status"],
-      where: { closedById: { not: null } },
-      _count: { _all: true },
-    });
+    const closedGroupsRaw = await this.leads
+      .createQueryBuilder('lead')
+      .select('lead.closedById', 'closedById')
+      .addSelect('lead.status', 'status')
+      .addSelect('COUNT(*)', 'count')
+      .where('lead.closedById IS NOT NULL')
+      .groupBy('lead.closedById')
+      .addGroupBy('lead.status')
+      .getRawMany<{
+        closedById: string | null;
+        status: string;
+        count: string;
+      }>();
+
+    const closedGroups = closedGroupsRaw.map((row) => ({
+      closedById: row.closedById,
+      status: row.status,
+      count: Number(row.count),
+    }));
 
     const unassignedWhere = {
-      status: { in: [...openStatuses] },
-      assignedToId: null,
+      status: In([...openStatuses]),
+      assignedToId: IsNull(),
     };
 
-    const countUnassigned = await this.prisma.lead.count({
+    const countUnassigned = await this.leads.count({
       where: unassignedWhere,
     });
 
-    const unassignedRaw = await this.prisma.lead.findMany({
+    const unassignedRaw = await this.leads.find({
       where: unassignedWhere,
-      orderBy: { statusChangedAt: "asc" },
+      order: { statusChangedAt: 'ASC' },
       take: stuckLeadsLimit,
       select: {
         id: true,
@@ -120,7 +163,7 @@ export class AnalyticsService {
       },
     });
 
-    const closedBy = await this.buildClosedBy(closedGroups, users);
+    const closedBy = this.buildClosedBy(closedGroups, users);
 
     const leadsByUser = await this.buildLeadsByUser(users);
 
@@ -144,6 +187,7 @@ export class AnalyticsService {
       leadsByUser,
     };
   }
+
   async getEmployeeAnalytics({
     from: fromIso,
     to: toIso,
@@ -154,18 +198,18 @@ export class AnalyticsService {
     const now = new Date();
 
     const [openLeads, createdLeads, closedLeadsRaw] = await Promise.all([
-      this.prisma.lead.findMany({
-        where: { status: { in: [...openStatuses] } },
+      this.leads.find({
+        where: { status: In([...openStatuses]) },
         select: { assignedToId: true, status: true, statusChangedAt: true },
       }),
-      this.prisma.lead.findMany({
-        where: { createdAt: { gte: from, lt: to } },
+      this.leads.find({
+        where: { createdAt: And(MoreThanOrEqual(from), LessThan(to)) },
         select: { assignedToId: true },
       }),
-      this.prisma.lead.findMany({
+      this.leads.find({
         where: {
-          status: { in: [...closeStatuses] },
-          closedAt: { gte: from, lt: to },
+          status: In([...closeStatuses]),
+          closedAt: And(MoreThanOrEqual(from), LessThan(to)),
         },
         select: {
           closedById: true,
@@ -175,9 +219,11 @@ export class AnalyticsService {
         },
       }),
     ]);
+
     const closedLeads = closedLeadsRaw.flatMap((lead) =>
       lead.closedAt === null ? [] : [{ ...lead, closedAt: lead.closedAt }],
     );
+
     const built = buildEmployeeAnalytics({
       users,
       openLeads,
@@ -186,6 +232,7 @@ export class AnalyticsService {
       now,
       overdueThresholdDays: stuckThresholdDays,
     });
+
     return {
       period: { from: from.toISOString(), to: to.toISOString() },
       overdueThresholdDays: stuckThresholdDays,
@@ -193,26 +240,31 @@ export class AnalyticsService {
       ...built,
     };
   }
-  private async buildLeadsByUser(users: UserRef[]): Promise<LeadByUserRow[]> {
-    const groups = await this.prisma.lead.groupBy({
-      by: ["assignedToId"],
-      _count: { _all: true },
-    });
 
-    const rows: LeadByUserRow[] = groups.map((group) => {
+  private async buildLeadsByUser(users: UserRef[]): Promise<LeadByUserRow[]> {
+    const groupsRaw = await this.leads
+      .createQueryBuilder('lead')
+      .select('lead.assignedToId', 'assignedToId')
+      .addSelect('COUNT(*)', 'count')
+      .groupBy('lead.assignedToId')
+      .getRawMany<{ assignedToId: string | null; count: string }>();
+
+    const rows: LeadByUserRow[] = groupsRaw.map((group) => {
+      const leadCount = Number(group.count);
+
       if (!group.assignedToId) {
         return {
           userId: null,
-          userName: "Unassigned",
-          leadCount: group._count._all,
+          userName: 'Unassigned',
+          leadCount,
         };
       }
 
       const user = users.find((item) => item.id === group.assignedToId);
       return {
         userId: group.assignedToId,
-        userName: user?.name ?? "Unknown",
-        leadCount: group._count._all,
+        userName: user?.name ?? 'Unknown',
+        leadCount,
       };
     });
 
@@ -220,14 +272,14 @@ export class AnalyticsService {
     return rows;
   }
 
-  private async buildClosedBy(
+  private buildClosedBy(
     groups: {
       closedById: string | null;
       status: string;
-      _count: { _all: number };
+      count: number;
     }[],
     users: UserRef[],
-  ): Promise<ClosedByUserRow[]> {
+  ): ClosedByUserRow[] {
     const statsByUser = new Map<string, { won: number; lost: number }>();
 
     for (const group of groups) {
@@ -238,19 +290,18 @@ export class AnalyticsService {
       }
 
       const stats = statsByUser.get(group.closedById)!;
-      if (group.status === "won") stats.won += group._count._all;
-      if (group.status === "lost") stats.lost += group._count._all;
+      if (group.status === 'won') stats.won += group.count;
+      if (group.status === 'lost') stats.lost += group.count;
     }
 
     if (statsByUser.size === 0) return [];
-
 
     const result: ClosedByUserRow[] = [];
     for (const [userId, stats] of statsByUser) {
       const user = users.find((u) => u.id === userId);
       result.push({
         userId,
-        userName: user?.name ?? "Unknown",
+        userName: user?.name ?? 'Unknown',
         won: stats.won,
         lost: stats.lost,
         total: stats.won + stats.lost,
