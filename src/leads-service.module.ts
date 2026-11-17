@@ -1,8 +1,6 @@
 import { Module } from '@nestjs/common';
-import { PrismaModule } from './prisma/prisma.module';
 import { LeadsController } from './leads/leads.controller';
 import { LeadsService } from './leads/leads.service';
-
 import { ActivitiesController } from './activities/activities.controller';
 import { ActivitiesService } from './activities/activities.service';
 import { NotesController } from './notes/notes.controller';
@@ -17,7 +15,6 @@ import { ActivityEntity } from './activities/activity.entity';
 
 @Module({
   imports: [
-    PrismaModule,
     TypeOrmModule.forRoot(dataSourceOptions),
     TypeOrmModule.forFeature([LeadEntity, NoteEntity, ActivityEntity]),
   ],
