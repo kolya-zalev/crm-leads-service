@@ -16,40 +16,50 @@ import {
   type UpdateLeadPayload,
   type UpdateLeadResponse,
 } from '@crm/shared';
-import { PrismaService } from '../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { toLeadDto } from './leads.mapper';
+import { LeadEntity } from './lead.entity';
+import { ActivityEntity } from '../activities/activity.entity';
 
 @Injectable()
 export class LeadsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @InjectRepository(LeadEntity)
+    private readonly repo: Repository<LeadEntity>,
+    private readonly dataSource: DataSource,
+  ) {}
 
   async findAll(): Promise<LeadDto[]> {
-    const leads = await this.prisma.lead.findMany({});
+    const leads = await this.repo.find({
+      order: { createdAt: 'DESC' },
+    });
     return leads.map(toLeadDto);
   }
 
   async findOne({ id }: FindLeadPayload): Promise<LeadDto> {
-    const lead = await this.prisma.lead.findUnique({
-      where: { id },
-    });
+    const lead = await this.repo.findOneBy({ id });
     if (!lead) throw new NotFoundException(`Lead ${id} not found`);
     return toLeadDto(lead);
   }
 
   async create({ actor, data }: CreateLeadPayload): Promise<LeadDto> {
-    const lead = await this.prisma.lead.create({
-      data: {
-        ...data,
-        activities: {
-          create: {
-            type: 'lead_created',
-            description: 'Lead was created',
-            userId: actor.id,
-            userName: actor.name,
-          },
-        },
-      },
+    const lead = await this.dataSource.transaction(async (manager) => {
+      const createdLead = await manager.save(manager.create(LeadEntity, data));
+
+      await manager.save(
+        manager.create(ActivityEntity, {
+          leadId: createdLead.id,
+          type: 'lead_created',
+          description: 'Lead was created',
+          userId: actor.id,
+          userName: actor.name,
+        }),
+      );
+
+      return createdLead;
     });
+
     return toLeadDto(lead);
   }
 
@@ -60,7 +70,7 @@ export class LeadsService {
     assignee,
   }: UpdateLeadPayload): Promise<UpdateLeadResponse> {
     const { assignedToId, ...rest } = data;
-    const oldLead = await this.prisma.lead.findUnique({ where: { id } });
+    const oldLead = await this.repo.findOneBy({ id });
     if (!oldLead) throw new NotFoundException(`Lead ${id} not found`);
 
     const has = (permission: Permission) =>
@@ -149,19 +159,29 @@ export class LeadsService {
         }
       : {};
 
-    const updatedLead = await this.prisma.lead.update({
-      where: { id },
-      data: {
-        ...rest,
-        ...statusFields,
-        ...(assignedChanged
-          ? {
-              assignedToId: assignedToId ?? null,
-              assignedToName: assignee?.name ?? null,
-            }
-          : {}),
-        activities: { create: activities },
-      },
+    const updatedLead = await this.dataSource.transaction(async (manager) => {
+      const updated = await manager.save(
+        manager.merge(LeadEntity, oldLead, {
+          ...rest,
+          ...statusFields,
+          ...(assignedChanged
+            ? {
+                assignedToId: assignedToId ?? null,
+                assignedToName: assignee?.name ?? null,
+              }
+            : {}),
+        }),
+      );
+
+      if (activities.length > 0) {
+        await manager.save(
+          activities.map((a) =>
+            manager.create(ActivityEntity, { ...a, leadId: id }),
+          ),
+        );
+      }
+
+      return updated;
     });
 
     return {
@@ -177,9 +197,9 @@ export class LeadsService {
   }
 
   async remove({ id }: RemoveLeadPayload): Promise<OkResponse> {
-    const lead = await this.prisma.lead.findUnique({ where: { id } });
-    if (!lead) throw new NotFoundException(`Lead ${id} not found`);
-    await this.prisma.lead.delete({ where: { id } });
+    const result = await this.repo.findOneBy({ id });
+    if (!result) throw new NotFoundException(`Lead ${id} not found`);
+    await this.repo.delete({ id });
     return { ok: true };
   }
 }
