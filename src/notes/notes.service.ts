@@ -9,16 +9,16 @@ import type {
 import { toNoteDto } from '../leads/leads.mapper';
 import { InjectRepository } from '@nestjs/typeorm';
 import { NoteEntity } from './note.entity';
-import { DataSource, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { LeadEntity } from '../leads/lead.entity';
-import { ActivityEntity } from '../activities/activity.entity';
 
 @Injectable()
 export class NotesService {
   constructor(
     @InjectRepository(NoteEntity)
     private readonly notes: Repository<NoteEntity>,
-    private readonly dataSource: DataSource,
+    @InjectRepository(LeadEntity)
+    private readonly leads: Repository<LeadEntity>,
   ) {}
 
   async findByLead({ leadId }: LeadIdPayload): Promise<NoteDto[]> {
@@ -29,54 +29,22 @@ export class NotesService {
     return notes.map(toNoteDto);
   }
 
-  async create({ actor, leadId, text }: CreateNotePayload): Promise<NoteDto> {
-    const note = await this.dataSource.transaction(async (manager) => {
-      const leadExists = await manager.existsBy(LeadEntity, { id: leadId });
-      if (!leadExists) {
-        throw new NotFoundException(`Lead ${leadId} not found`);
-      }
+  async create({ leadId, text }: CreateNotePayload): Promise<NoteDto> {
+    const leadExists = await this.leads.existsBy({ id: leadId });
+    if (!leadExists) {
+      throw new NotFoundException(`Lead ${leadId} not found`);
+    }
 
-      const createdNote = await manager.save(
-        manager.create(NoteEntity, { leadId, text }),
-      );
-
-      await manager.save(
-        manager.create(ActivityEntity, {
-          leadId,
-          type: 'note_added',
-          description: 'Note added',
-          userId: actor.id,
-          userName: actor.name,
-        }),
-      );
-
-      return createdNote;
-    });
+    const note = await this.notes.save(this.notes.create({ leadId, text }));
 
     return toNoteDto(note);
   }
 
-  async remove({
-    actor,
-    leadId,
-    noteId,
-  }: RemoveNotePayload): Promise<OkResponse> {
+  async remove({ leadId, noteId }: RemoveNotePayload): Promise<OkResponse> {
     const note = await this.notes.findOneBy({ id: noteId, leadId });
     if (!note) throw new NotFoundException(`Note ${noteId} not found`);
 
-    await this.dataSource.transaction(async (manager) => {
-      await manager.delete(NoteEntity, { id: noteId });
-
-      await manager.save(
-        manager.create(ActivityEntity, {
-          leadId,
-          type: 'note_deleted',
-          description: 'Note deleted',
-          userId: actor.id,
-          userName: actor.name,
-        }),
-      );
-    });
+    await this.notes.delete({ id: noteId });
 
     return { ok: true };
   }

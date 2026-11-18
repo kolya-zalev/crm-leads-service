@@ -17,17 +17,15 @@ import {
   type UpdateLeadResponse,
 } from '@crm/shared';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { toLeadDto } from './leads.mapper';
 import { LeadEntity } from './lead.entity';
-import { ActivityEntity } from '../activities/activity.entity';
 
 @Injectable()
 export class LeadsService {
   constructor(
     @InjectRepository(LeadEntity)
     private readonly repo: Repository<LeadEntity>,
-    private readonly dataSource: DataSource,
   ) {}
 
   async findAll(): Promise<LeadDto[]> {
@@ -43,23 +41,8 @@ export class LeadsService {
     return toLeadDto(lead);
   }
 
-  async create({ actor, data }: CreateLeadPayload): Promise<LeadDto> {
-    const lead = await this.dataSource.transaction(async (manager) => {
-      const createdLead = await manager.save(manager.create(LeadEntity, data));
-
-      await manager.save(
-        manager.create(ActivityEntity, {
-          leadId: createdLead.id,
-          type: 'lead_created',
-          description: 'Lead was created',
-          userId: actor.id,
-          userName: actor.name,
-        }),
-      );
-
-      return createdLead;
-    });
-
+  async create({ data }: CreateLeadPayload): Promise<LeadDto> {
+    const lead = await this.repo.save(this.repo.create(data));
     return toLeadDto(lead);
   }
 
@@ -114,41 +97,8 @@ export class LeadsService {
 
     const statusChanged = !!rest.status && rest.status !== oldLead.status;
 
-    const activities: {
-      type: string;
-      description: string;
-      userId: string;
-      userName: string;
-    }[] = [];
-
-    if (statusChanged) {
-      activities.push({
-        type: 'status_changed',
-        description: `${oldLead.status} → ${rest.status}`,
-        userId: actor.id,
-        userName: actor.name,
-      });
-    }
-
-    if (assignedChanged) {
-      const from = oldLead.assignedToName ?? 'Unassigned';
-      const to = assignee?.name ?? 'Unassigned';
-      activities.push({
-        type: 'assigned',
-        description: `${from} → ${to}`,
-        userId: actor.id,
-        userName: actor.name,
-      });
-    }
-
-    if (activities.length === 0) {
-      activities.push({
-        type: 'lead_updated',
-        description: 'Lead was updated',
-        userId: actor.id,
-        userName: actor.name,
-      });
-    }
+    const previousStatus = oldLead.status;
+    const previousAssigneeName = oldLead.assignedToName ?? null;
 
     const closing = statusChanged && isClosedStatus(rest.status!);
     const statusFields = statusChanged
@@ -159,39 +109,29 @@ export class LeadsService {
         }
       : {};
 
-    const updatedLead = await this.dataSource.transaction(async (manager) => {
-      const updated = await manager.save(
-        manager.merge(LeadEntity, oldLead, {
-          ...rest,
-          ...statusFields,
-          ...(assignedChanged
-            ? {
-                assignedToId: assignedToId ?? null,
-                assignedToName: assignee?.name ?? null,
-              }
-            : {}),
-        }),
-      );
-
-      if (activities.length > 0) {
-        await manager.save(
-          activities.map((a) =>
-            manager.create(ActivityEntity, { ...a, leadId: id }),
-          ),
-        );
-      }
-
-      return updated;
-    });
+    const updatedLead = await this.repo.save(
+      this.repo.merge(oldLead, {
+        ...rest,
+        ...statusFields,
+        ...(assignedChanged
+          ? {
+              assignedToId: assignedToId ?? null,
+              assignedToName: assignee?.name ?? null,
+            }
+          : {}),
+      }),
+    );
 
     return {
       lead: toLeadDto(updatedLead),
       changes: {
         assignedChanged,
         nextAssignee: assignee,
+        previousAssigneeName,
         statusChanged,
         closing,
         newStatus: rest.status,
+        previousStatus,
       } satisfies LeadChanges,
     };
   }

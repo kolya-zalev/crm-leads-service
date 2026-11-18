@@ -1,7 +1,6 @@
-import type { ActivityDto, LeadDto, NoteDto } from '@crm/shared';
+import type { LeadDto, NoteDto } from '@crm/shared';
 import type { LeadEntity } from './lead.entity';
 import type { NoteEntity } from '../notes/note.entity';
-import type { ActivityEntity } from '../activities/activity.entity';
 
 export const toNoteDto = (row: NoteEntity): NoteDto => ({
   id: row.id,
@@ -9,16 +8,6 @@ export const toNoteDto = (row: NoteEntity): NoteDto => ({
   leadId: row.leadId,
   createdAt: row.createdAt.toISOString(),
   updatedAt: row.updatedAt.toISOString(),
-});
-
-export const toActivityDto = (row: ActivityEntity): ActivityDto => ({
-  id: row.id,
-  leadId: row.leadId,
-  createdAt: row.createdAt.toISOString(),
-  type: row.type,
-  description: row.description,
-  userId: row.userId,
-  userName: row.userName,
 });
 
 export const toLeadDto = (row: LeadEntity): LeadDto => ({
